@@ -388,6 +388,7 @@
     recIndicator.classList.remove('hidden');
     audioLevelContainer.classList.remove('hidden');
     recControls.classList.remove('hidden');
+    btnStealth.classList.remove('hidden');
     recHint.classList.add('hidden');
     recStatus.textContent = 'Recording...';
 
@@ -444,6 +445,7 @@
     recIndicator.classList.add('hidden');
     audioLevelContainer.classList.add('hidden');
     recControls.classList.add('hidden');
+    btnStealth.classList.add('hidden');
     recHint.classList.remove('hidden');
     recHint.textContent = 'Tap to record';
     recStatus.textContent = '';
