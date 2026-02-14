@@ -701,6 +701,98 @@
       };
       downloadText(JSON.stringify(json, null, 2), fname + '.json', 'application/json');
     };
+
+    // Generate Summary button
+    $('btn-summarize').onclick = async () => {
+      await generateSummary(rec);
+    };
+  }
+
+  // ── Summarize ──────────────────────────────────────────
+  async function generateSummary(rec) {
+    const summaryProgress = $('summary-progress');
+    const summaryResult = $('summary-result');
+    const summaryText = $('summary-text');
+    const summaryProgressFill = $('summary-progress-fill');
+    const summaryProgressText = $('summary-progress-text');
+
+    // Show progress
+    summaryProgress.classList.remove('hidden');
+    summaryResult.classList.add('hidden');
+    summaryProgressFill.style.width = '10%';
+    summaryProgressText.textContent = 'Sending transcript to Claude...';
+
+    try {
+      const response = await fetch('/.netlify/functions/summarize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript: rec.transcript })
+      });
+
+      summaryProgressFill.style.width = '50%';
+      summaryProgressText.textContent = 'Analyzing transcript...';
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Failed to generate summary');
+      }
+
+      const data = await response.json();
+
+      summaryProgressFill.style.width = '100%';
+      summaryProgressText.textContent = 'Complete!';
+
+      // Save summary to recording
+      rec.summary = data.summary;
+      await dbPut(STORE_RECORDINGS, rec);
+
+      // Display summary
+      summaryText.innerHTML = marked(data.summary);
+
+      setTimeout(() => {
+        summaryProgress.classList.add('hidden');
+        summaryResult.classList.remove('hidden');
+      }, 500);
+
+      // Setup download/copy buttons
+      $('btn-copy-summary').onclick = () => {
+        navigator.clipboard.writeText(data.summary);
+        $('btn-copy-summary').textContent = '✓ Copied!';
+        setTimeout(() => {
+          $('btn-copy-summary').textContent = '📋 Copy Summary';
+        }, 2000);
+      };
+
+      $('btn-dl-summary').onclick = () => {
+        const fname = filenameFromDate(rec.startTime);
+        downloadText(data.summary, fname + '-summary.md');
+      };
+
+    } catch (e) {
+      summaryProgressText.textContent = '❌ Error: ' + e.message;
+      setTimeout(() => {
+        summaryProgress.classList.add('hidden');
+      }, 3000);
+    }
+  }
+
+  // Simple markdown renderer
+  function marked(text) {
+    return text
+      .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+      .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+      .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.*?)\*/g, '<em>$1</em>')
+      .replace(/^- (.*$)/gim, '<li>$1</li>')
+      .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
+      .replace(/\n\n/g, '</p><p>')
+      .replace(/^(.+)$/gim, '<p>$1</p>')
+      .replace(/<p><\/p>/g, '')
+      .replace(/<p>(<h[123]>)/g, '$1')
+      .replace(/(<\/h[123]>)<\/p>/g, '$1')
+      .replace(/<p>(<ul>)/g, '$1')
+      .replace(/(<\/ul>)<\/p>/g, '$1');
   }
 
   function fmtTimeSec(sec) {

@@ -72,6 +72,19 @@
           <button id="btn-dl-txt" class="action-btn">📄 .txt</button>
           <button id="btn-dl-md" class="action-btn">📝 .md</button>
           <button id="btn-dl-json" class="action-btn">📋 .json</button>
+          <button id="btn-summarize" class="action-btn primary">✨ Generate Summary</button>
+        </div>
+      </div>
+      <div id="summary-progress" class="hidden">
+        <div class="progress-bar"><div id="summary-progress-fill"></div></div>
+        <p id="summary-progress-text">Analyzing transcript...</p>
+      </div>
+      <div id="summary-result" class="hidden">
+        <h3>📋 Meeting Summary</h3>
+        <div id="summary-text"></div>
+        <div id="summary-actions">
+          <button id="btn-copy-summary" class="action-btn">📋 Copy Summary</button>
+          <button id="btn-dl-summary" class="action-btn">📄 Download Summary</button>
         </div>
       </div>
       <button id="btn-back-record" class="action-btn">← New Recording</button>
