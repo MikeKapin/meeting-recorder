@@ -39,8 +39,18 @@
       <div id="rec-controls" class="hidden">
         <button id="btn-pause" class="ctrl-btn">⏸ Pause</button>
         <button id="btn-stop" class="ctrl-btn stop-btn">⏹ Stop</button>
+        <button id="btn-stealth" class="ctrl-btn">👁️ Stealth Mode</button>
       </div>
       <p id="rec-hint">Tap to record</p>
+    </div>
+
+    <!-- Stealth Mode Overlay -->
+    <div id="stealth-overlay" class="hidden">
+      <div class="stealth-indicator">
+        <div class="stealth-dot"></div>
+        <div class="stealth-time" id="stealth-timer">00:00:00</div>
+      </div>
+      <div class="stealth-hint">Tap anywhere to exit stealth mode</div>
     </div>
 
     <!-- Transcription View (shown after stopping) -->

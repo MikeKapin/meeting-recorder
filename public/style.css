@@ -290,3 +290,60 @@ body {
 @media (min-width: 500px) {
   #audio-level { width: 300px; }
 }
+
+/* Stealth Mode Overlay */
+#stealth-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #000;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.stealth-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  opacity: 0.3;
+}
+
+.stealth-dot {
+  width: 8px;
+  height: 8px;
+  background: #e74c3c;
+  border-radius: 50%;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.stealth-time {
+  font-size: 14px;
+  color: #666;
+  font-variant-numeric: tabular-nums;
+}
+
+.stealth-hint {
+  position: absolute;
+  bottom: 40px;
+  font-size: 11px;
+  color: #444;
+  opacity: 0;
+  animation: fadeInOut 3s ease-in-out 2s;
+}
+
+@keyframes fadeInOut {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}

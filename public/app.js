@@ -129,6 +129,9 @@
   const recoveryBanner = $('recovery-banner');
   const btnRecover = $('btn-recover');
   const btnDiscardRecovery = $('btn-discard-recovery');
+  const btnStealth = $('btn-stealth');
+  const stealthOverlay = $('stealth-overlay');
+  const stealthTimer = $('stealth-timer');
 
   // ── Helpers ────────────────────────────────────────────
   function fmtTime(ms) {
@@ -447,6 +450,7 @@
     recTimer.textContent = '00:00:00';
     btnPause.textContent = '⏸ Pause';
     document.querySelector('.red-dot').style.animationPlayState = 'running';
+    if (stealthMode) disableStealthMode();
   }
 
   // Record button handler
@@ -459,6 +463,48 @@
   });
   btnStop.addEventListener('click', stopRecording);
   btnPause.addEventListener('click', pauseRecording);
+
+  // ── Stealth Mode ───────────────────────────────────────
+  let stealthMode = false;
+
+  function enableStealthMode() {
+    stealthMode = true;
+    stealthOverlay.classList.remove('hidden');
+    // Dim screen brightness if supported
+    if ('screen' in window && 'orientation' in window.screen) {
+      document.body.style.filter = 'brightness(0.1)';
+    }
+  }
+
+  function disableStealthMode() {
+    stealthMode = false;
+    stealthOverlay.classList.add('hidden');
+    document.body.style.filter = '';
+  }
+
+  btnStealth.addEventListener('click', () => {
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      enableStealthMode();
+    }
+  });
+
+  stealthOverlay.addEventListener('click', disableStealthMode);
+
+  // Update stealth timer
+  function updateStealthTimer() {
+    if (stealthMode && recordingStartTime) {
+      const elapsed = Date.now() - recordingStartTime - pausedDuration;
+      stealthTimer.textContent = fmtTime(elapsed);
+    }
+  }
+
+  // Add to existing timer interval
+  const originalTimerInterval = timerInterval;
+  setInterval(() => {
+    if (stealthMode) {
+      updateStealthTimer();
+    }
+  }, 1000);
 
   // ── Result View ────────────────────────────────────────
   function showResultView(rec) {
