@@ -1,0 +1,55 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background gradient -->
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#e74c3c;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#c0392b;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="mic" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffffff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#ecf0f1;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded square background -->
+  <rect width="512" height="512" rx="115" fill="url(#bg)"/>
+
+  <!-- Microphone body -->
+  <rect x="226" y="140" width="60" height="100" rx="30" fill="url(#mic)"/>
+
+  <!-- Microphone grille lines -->
+  <rect x="236" y="160" width="40" height="3" rx="1.5" fill="#c0392b" opacity="0.3"/>
+  <rect x="236" y="170" width="40" height="3" rx="1.5" fill="#c0392b" opacity="0.3"/>
+  <rect x="236" y="180" width="40" height="3" rx="1.5" fill="#c0392b" opacity="0.3"/>
+  <rect x="236" y="190" width="40" height="3" rx="1.5" fill="#c0392b" opacity="0.3"/>
+  <rect x="236" y="200" width="40" height="3" rx="1.5" fill="#c0392b" opacity="0.3"/>
+  <rect x="236" y="210" width="40" height="3" rx="1.5" fill="#c0392b" opacity="0.3"/>
+  <rect x="236" y="220" width="40" height="3" rx="1.5" fill="#c0392b" opacity="0.3"/>
+
+  <!-- Microphone stand arc -->
+  <path d="M 196 220 Q 196 280 256 280 Q 316 280 316 220"
+        stroke="url(#mic)" stroke-width="12" fill="none" stroke-linecap="round"/>
+
+  <!-- Microphone stand vertical -->
+  <rect x="250" y="280" width="12" height="60" rx="6" fill="url(#mic)"/>
+
+  <!-- Microphone base -->
+  <ellipse cx="256" cy="350" rx="40" ry="8" fill="url(#mic)"/>
+
+  <!-- Audio waveform accent -->
+  <g opacity="0.25">
+    <rect x="140" y="240" width="8" height="30" rx="4" fill="#ffffff"/>
+    <rect x="160" y="220" width="8" height="70" rx="4" fill="#ffffff"/>
+    <rect x="180" y="230" width="8" height="50" rx="4" fill="#ffffff"/>
+
+    <rect x="344" y="230" width="8" height="50" rx="4" fill="#ffffff"/>
+    <rect x="364" y="220" width="8" height="70" rx="4" fill="#ffffff"/>
+    <rect x="384" y="240" width="8" height="30" rx="4" fill="#ffffff"/>
+  </g>
+
+  <!-- Stealth eye accent (subtle) -->
+  <g opacity="0.15">
+    <ellipse cx="256" cy="420" rx="35" ry="12" fill="#000000"/>
+    <circle cx="256" cy="420" r="6" fill="#ffffff"/>
+  </g>
+</svg>
