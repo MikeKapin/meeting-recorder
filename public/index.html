@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#1a1a2e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Meeting Recorder</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Status Bar -->
+    <div id="status-bar">
+      <div id="battery-warning" class="hidden">⚠️ Low battery</div>
+      <div id="storage-warning" class="hidden">⚠️ Low storage</div>
+      <div id="offline-badge" class="hidden">Offline</div>
+    </div>
+
+    <!-- Recording View -->
+    <div id="view-record" class="view active">
+      <div id="rec-indicator" class="hidden">
+        <span class="red-dot"></span>
+        <span id="rec-timer">00:00:00</span>
+      </div>
+      <div id="audio-level-container" class="hidden">
+        <canvas id="audio-level" width="300" height="60"></canvas>
+      </div>
+      <div id="rec-status"></div>
+      <button id="btn-record" class="record-btn" aria-label="Record">
+        <svg viewBox="0 0 80 80" width="80" height="80">
+          <circle cx="40" cy="40" r="36" fill="#e74c3c"/>
+        </svg>
+      </button>
+      <div id="rec-controls" class="hidden">
+        <button id="btn-pause" class="ctrl-btn">⏸ Pause</button>
+        <button id="btn-stop" class="ctrl-btn stop-btn">⏹ Stop</button>
+      </div>
+      <p id="rec-hint">Tap to record</p>
+    </div>
+
+    <!-- Transcription View (shown after stopping) -->
+    <div id="view-result" class="view hidden">
+      <h2 id="result-title"></h2>
+      <div id="result-meta"></div>
+      <div id="result-actions">
+        <button id="btn-download-audio" class="action-btn">⬇ Download Audio</button>
+        <button id="btn-transcribe" class="action-btn primary">🎤 Transcribe</button>
+      </div>
+      <div id="transcription-progress" class="hidden">
+        <div class="progress-bar"><div id="progress-fill"></div></div>
+        <p id="progress-text">Uploading...</p>
+      </div>
+      <div id="transcript-result" class="hidden">
+        <h3>Transcript</h3>
+        <div id="transcript-text"></div>
+        <div id="transcript-actions">
+          <button id="btn-dl-txt" class="action-btn">📄 .txt</button>
+          <button id="btn-dl-md" class="action-btn">📝 .md</button>
+          <button id="btn-dl-json" class="action-btn">📋 .json</button>
+        </div>
+      </div>
+      <button id="btn-back-record" class="action-btn">← New Recording</button>
+    </div>
+
+    <!-- Archive View -->
+    <div id="view-archive" class="view hidden">
+      <h2>Recordings</h2>
+      <div id="archive-list"></div>
+      <p id="archive-empty" class="hidden">No recordings yet</p>
+    </div>
+
+    <!-- Recovery Banner -->
+    <div id="recovery-banner" class="hidden">
+      <p>⚠️ Unfinished recording detected!</p>
+      <button id="btn-recover">Recover</button>
+      <button id="btn-discard-recovery">Discard</button>
+    </div>
+
+    <!-- Nav -->
+    <nav id="bottom-nav">
+      <button class="nav-btn active" data-view="record">⏺ Record</button>
+      <button class="nav-btn" data-view="archive">📁 Archive</button>
+    </nav>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

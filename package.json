@@ -1,0 +1,11 @@
+{
+  "name": "meeting-recorder",
+  "version": "1.0.0",
+  "description": "Meeting Recorder & Transcriber PWA - Reliable audio recording with Whisper transcription",
+  "scripts": {
+    "dev": "netlify dev"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  }
+}
