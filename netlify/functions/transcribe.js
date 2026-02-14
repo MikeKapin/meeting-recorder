@@ -102,7 +102,7 @@ export async function handler(event) {
           'Prefer': 'respond-async'
         },
         body: JSON.stringify({
-          version: 'cdd97b257f93cb89dede1c7584df59efd8f93f873c45f82f2c00c49fa49cc5c7',
+          version: '3c08daf437fe359eb158a5123c395673f0a113dd8b4bd01ddce5936850e2a981',
           input: {
             audio: audioUrl,
             model: 'large-v3',
