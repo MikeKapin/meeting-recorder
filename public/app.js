@@ -641,7 +641,9 @@
       const wavChunks = [];
       for (let start = 0; start < pcmData.length; start += chunkSize) {
         const slice = pcmData.subarray(start, Math.min(start + chunkSize, pcmData.length));
-        wavChunks.push(float32ToWav(slice, targetRate));
+        if (slice.length >= targetRate) { // skip fragments < 1s — Replicate rejects them
+          wavChunks.push(float32ToWav(slice, targetRate));
+        }
       }
 
       progressFill.style.width = '15%';
