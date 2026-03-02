@@ -633,11 +633,15 @@
       progressText.textContent = `Uploading ${n} segment${n > 1 ? 's' : ''}...`;
 
       // Step 3: Start all Replicate predictions in parallel (one per chunk)
+      // We send base64 JSON (not raw binary) because Netlify/Lambda only reliably
+      // handles binary bodies for content types it explicitly recognises. JSON is
+      // universally supported. Each chunk encodes to ~4.88 MB — under the 6 MB limit.
       const predictionIds = await Promise.all(wavChunks.map(async (wavBlob, i) => {
+        const base64 = await blobToBase64(wavBlob);
         const resp = await fetch('/.netlify/functions/transcribe', {
           method: 'POST',
-          headers: { 'Content-Type': 'audio/wav' },
-          body: wavBlob
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ audio: base64, mimeType: 'audio/wav' })
         });
         if (!resp.ok) {
           const errText = await resp.text();
@@ -757,6 +761,15 @@
 
   function writeWavStr(view, offset, str) {
     for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  }
+
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
   }
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }

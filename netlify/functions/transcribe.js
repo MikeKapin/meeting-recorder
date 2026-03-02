@@ -55,29 +55,27 @@ export async function handler(event) {
     }
   }
 
-  // POST: Start transcription — accepts raw binary audio (audio/wav, audio/mp4, etc.)
-  // Each request should be a single audio segment ≤ 6MB (use chunked upload from client)
+  // POST: Start transcription — accepts { audio: base64DataUrl, mimeType } JSON
+  // Each request is a single audio segment (≤ 6 MB after base64 encoding)
   if (event.httpMethod === 'POST') {
     try {
-      const contentType = (
-        event.headers['content-type'] || event.headers['Content-Type'] || 'audio/wav'
-      ).split(';')[0].trim();
+      const body = JSON.parse(event.body);
+      const { audio, mimeType } = body;
 
-      // Lambda/Netlify base64-encodes binary request bodies; decode accordingly
-      const buffer = event.isBase64Encoded
-        ? Buffer.from(event.body, 'base64')
-        : Buffer.from(event.body);
-
-      if (!buffer || buffer.length === 0) {
+      if (!audio) {
         return { statusCode: 400, headers, body: JSON.stringify({ error: 'No audio data provided' }) };
       }
+
+      // audio is a data URL: data:audio/wav;base64,XXXX — extract the base64 part
+      const base64Data = audio.includes(',') ? audio.split(',')[1] : audio;
+      const buffer = Buffer.from(base64Data, 'base64');
 
       // Step 1: Upload audio file to Replicate's file API
       const uploadResp = await fetch('https://api.replicate.com/v1/files', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${REPLICATE_TOKEN}`,
-          'Content-Type': contentType
+          'Content-Type': mimeType || 'audio/wav'
         },
         body: buffer
       });
