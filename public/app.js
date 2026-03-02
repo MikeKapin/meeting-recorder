@@ -587,12 +587,12 @@
   // ── Transcription ─────────────────────────────────────
   $('btn-transcribe').addEventListener('click', () => transcribe(currentRecording));
 
-  // CHUNK_SECS: 2-minute segments at 16kHz mono 16-bit = 3.84MB each — safely under Netlify's 6MB limit.
-  // Whisper large-v3 is trained on 16kHz mono, so this is the optimal input format.
-  const CHUNK_SECS = 120;
-
   // Max blob size to send in one shot (base64 overhead ~1.37x, 6MB Netlify limit → ~4MB safe)
   const DIRECT_MAX_BYTES = 4 * 1024 * 1024;
+
+  // Chunk size for large-file uploads via Netlify Blobs (binary bytes, NOT base64).
+  // 3.5MB binary → 4.67MB base64 JSON → well under the 6MB Netlify request limit.
+  const CHUNK_UPLOAD_BYTES = 3.5 * 1024 * 1024;
 
   async function transcribe(rec) {
     if (!rec || !rec.blob) return;
@@ -602,20 +602,20 @@
     const progressText = $('progress-text');
     progressContainer.classList.remove('hidden');
     progressFill.style.width = '5%';
-    progressText.textContent = 'Preparing audio...';
+    progressText.textContent = 'Preparing audio (v13)...';
 
     try {
-      let predictionIds;
-      let chunkCount = 1;
-      let timeOffsets = [0];
+      let results;
 
       if (rec.blob.size <= DIRECT_MAX_BYTES) {
-        // ── Direct path: small recording — send original audio, no conversion ──
+        // ── Direct path: small recording — send original audio as base64 ──
         const sizeMB = (rec.blob.size / 1048576).toFixed(2);
         progressText.textContent = `Uploading audio (${sizeMB} MB)...`;
         progressFill.style.width = '25%';
 
         const base64 = await blobToBase64(rec.blob);
+        progressText.textContent = 'Transcribing...';
+        progressFill.style.width = '50%';
         const resp = await fetch('/.netlify/functions/transcribe', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -623,68 +623,52 @@
         });
         if (!resp.ok) {
           const errText = await resp.text();
-          throw new Error(`Upload failed (HTTP ${resp.status}): ${errText}`);
+          throw new Error(`Transcription failed (HTTP ${resp.status}): ${errText}`);
         }
-        predictionIds = [(await resp.json()).predictionId];
+        results = [(await resp.json()).transcription];
 
       } else {
-        // ── Chunked path: large recording — resample to 16kHz WAV chunks ──
-        progressText.textContent = 'Decoding audio...';
-        const targetRate = 16000;
-        let pcmData;
-        try {
-          const arrayBuffer = await rec.blob.arrayBuffer();
-          const decodeCtx = new (window.AudioContext || window.webkitAudioContext)();
-          const decoded = await decodeCtx.decodeAudioData(arrayBuffer);
-          decodeCtx.close();
-          const totalSamples = Math.ceil(decoded.duration * targetRate);
-          const offlineCtx = new OfflineAudioContext(1, totalSamples, targetRate);
-          const src = offlineCtx.createBufferSource();
-          src.buffer = decoded;
-          src.connect(offlineCtx.destination);
-          src.start(0);
-          const resampled = await offlineCtx.startRendering();
-          pcmData = resampled.getChannelData(0);
-        } catch (e) {
-          throw new Error('Audio decode failed: ' + e.message);
-        }
+        // ── Chunked path: large recording — upload chunks to Blobs, server reassembles ──
+        const uploadId = generateId();
+        const numParts = Math.ceil(rec.blob.size / CHUNK_UPLOAD_BYTES);
 
-        const chunkSize = CHUNK_SECS * targetRate;
-        const wavChunks = [];
-        timeOffsets = [];
-        for (let start = 0; start < pcmData.length; start += chunkSize) {
-          const slice = pcmData.subarray(start, Math.min(start + chunkSize, pcmData.length));
-          if (slice.length >= targetRate) {
-            wavChunks.push(float32ToWav(slice, targetRate));
-            timeOffsets.push(start / targetRate);
-          }
-        }
-        chunkCount = wavChunks.length;
+        for (let i = 0; i < numParts; i++) {
+          const start = i * CHUNK_UPLOAD_BYTES;
+          const end = Math.min(start + CHUNK_UPLOAD_BYTES, rec.blob.size);
+          const part = rec.blob.slice(start, end, rec.mimeType);
 
-        predictionIds = [];
-        for (let i = 0; i < wavChunks.length; i++) {
-          progressText.textContent = `Uploading segment ${i + 1} of ${chunkCount}...`;
-          progressFill.style.width = (15 + (i / chunkCount) * 15) + '%';
-          const base64 = await blobToBase64(wavChunks[i]);
-          const resp = await fetch('/.netlify/functions/transcribe', {
+          progressText.textContent = `Uploading part ${i + 1} of ${numParts}...`;
+          progressFill.style.width = (15 + (i / numParts) * 35) + '%';
+
+          const base64 = await blobToBase64(part);
+          const resp = await fetch('/.netlify/functions/upload-chunk', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ audio: base64, mimeType: 'audio/wav' })
+            body: JSON.stringify({ id: uploadId, chunkIndex: i, base64 })
           });
           if (!resp.ok) {
             const errText = await resp.text();
-            throw new Error(`Segment ${i + 1} upload failed (HTTP ${resp.status}): ${errText}`);
+            throw new Error(`Part ${i + 1} upload failed (HTTP ${resp.status}): ${errText}`);
           }
-          predictionIds.push((await resp.json()).predictionId);
         }
+
+        progressText.textContent = 'Transcribing (this takes ~30 seconds)...';
+        progressFill.style.width = '55%';
+
+        const resp = await fetch('/.netlify/functions/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: uploadId, totalChunks: numParts, mimeType: rec.mimeType })
+        });
+        if (!resp.ok) {
+          const errText = await resp.text();
+          throw new Error(`Transcription failed (HTTP ${resp.status}): ${errText}`);
+        }
+        results = [(await resp.json()).transcription];
       }
 
-      progressFill.style.width = '40%';
-      progressText.textContent = chunkCount > 1
-        ? `Transcribing ${chunkCount} segments in parallel...`
-        : 'Transcribing...';
-
-      const results = await pollAllPredictions(predictionIds, progressFill, progressText);
+      progressFill.style.width = '90%';
+      progressText.textContent = 'Finishing up...';
 
       // Stitch segments with corrected timestamps
       let fullText = '';
@@ -693,7 +677,7 @@
         const out = results[i];
         const segText = (out.text || out.transcription || '').trim();
         if (segText) fullText += (fullText ? ' ' : '') + segText;
-        const offset = timeOffsets[i] || 0;
+        const offset = 0;
         (out.segments || []).forEach(s => {
           allSegments.push({ ...s, start: s.start + offset, end: s.end + offset });
         });
@@ -838,22 +822,6 @@
       downloadText(md, fname + '.md');
     };
 
-    $('btn-dl-json').onclick = () => {
-      const ext = rec.mimeType.includes('webm') ? 'webm' : 'mp4';
-      const json = {
-        type: 'meeting_transcript',
-        date: new Date(rec.startTime).toISOString(),
-        duration: fmtTime(rec.duration),
-        audio_file: fname + '.' + ext,
-        transcript: rec.transcript,
-        segments: (rec.segments || []).map(s => ({
-          start: s.start,
-          end: s.end,
-          text: s.text
-        }))
-      };
-      downloadText(JSON.stringify(json, null, 2), fname + '.json', 'application/json');
-    };
 
     // Generate Summary button
     $('btn-summarize').onclick = async () => {
