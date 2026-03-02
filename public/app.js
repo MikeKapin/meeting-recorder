@@ -621,9 +621,9 @@
       }
 
       progressText.textContent = 'Step 2/4: Resampling to 16kHz...';
+      const targetRate = 16000;
       let pcmData;
       try {
-        const targetRate = 16000;
         const totalSamples = Math.ceil(decoded.duration * targetRate);
         const offlineCtx = new OfflineAudioContext(1, totalSamples, targetRate);
         const src = offlineCtx.createBufferSource();
@@ -637,7 +637,7 @@
       }
 
       // Step 2: Split into CHUNK_SECS-long WAV blobs
-      const chunkSize = CHUNK_SECS * 16000;
+      const chunkSize = CHUNK_SECS * targetRate;
       const wavChunks = [];
       for (let start = 0; start < pcmData.length; start += chunkSize) {
         const slice = pcmData.subarray(start, Math.min(start + chunkSize, pcmData.length));

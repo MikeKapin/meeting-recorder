@@ -1,4 +1,4 @@
-const CACHE_NAME = 'meeting-recorder-v4';
+const CACHE_NAME = 'meeting-recorder-v5';
 const ASSETS = [
   '/',
   '/index.html',
