@@ -55,45 +55,42 @@ export async function handler(event) {
     }
   }
 
-  // POST: Start transcription
+  // POST: Start transcription — accepts raw binary audio (audio/wav, audio/mp4, etc.)
+  // Each request should be a single audio segment ≤ 6MB (use chunked upload from client)
   if (event.httpMethod === 'POST') {
     try {
-      const body = JSON.parse(event.body);
-      const { audio, mimeType } = body;
+      const contentType = (
+        event.headers['content-type'] || event.headers['Content-Type'] || 'audio/wav'
+      ).split(';')[0].trim();
 
-      if (!audio) {
+      // Lambda/Netlify base64-encodes binary request bodies; decode accordingly
+      const buffer = event.isBase64Encoded
+        ? Buffer.from(event.body, 'base64')
+        : Buffer.from(event.body);
+
+      if (!buffer || buffer.length === 0) {
         return { statusCode: 400, headers, body: JSON.stringify({ error: 'No audio data provided' }) };
       }
 
-      // audio is a data URL: data:audio/webm;base64,XXXX
-      // Extract the base64 part
-      const base64Data = audio.includes(',') ? audio.split(',')[1] : audio;
-      const buffer = Buffer.from(base64Data, 'base64');
-
-      // Determine file extension
-      const ext = (mimeType || '').includes('webm') ? 'webm' : (mimeType || '').includes('mp4') ? 'mp4' : 'webm';
-
-      // Step 1: Upload file to Replicate's file API
+      // Step 1: Upload audio file to Replicate's file API
       const uploadResp = await fetch('https://api.replicate.com/v1/files', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${REPLICATE_TOKEN}`,
-          'Content-Type': mimeType || 'audio/webm'
+          'Content-Type': contentType
         },
         body: buffer
       });
 
-      let audioUrl;
-
-      if (uploadResp.ok) {
-        const uploadData = await uploadResp.json();
-        audioUrl = uploadData.urls.get;
-      } else {
-        // Fallback: use data URI directly (works for small files)
-        audioUrl = audio;
+      if (!uploadResp.ok) {
+        const errText = await uploadResp.text();
+        return { statusCode: 500, headers, body: JSON.stringify({ error: 'File upload to Replicate failed: ' + errText }) };
       }
 
-      // Step 2: Create prediction with Whisper
+      const uploadData = await uploadResp.json();
+      const audioUrl = uploadData.urls.get;
+
+      // Step 2: Create Whisper prediction
       const predResp = await fetch('https://api.replicate.com/v1/predictions', {
         method: 'POST',
         headers: {
@@ -125,7 +122,6 @@ export async function handler(event) {
       }
 
       const predData = await predResp.json();
-
       return {
         statusCode: 200,
         headers,

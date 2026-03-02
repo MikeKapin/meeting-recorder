@@ -93,6 +93,32 @@
     });
   }
 
+  // ── iOS Detection ─────────────────────────────────────
+  // iOS does not support the Wake Lock API — we use a silent audio oscillator
+  // to keep the browser audio engine alive and prevent screen-sleep throttling
+  const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+  let iosKeepaliveCtx = null;
+
+  function startIOSKeepalive() {
+    if (!isIOS || iosKeepaliveCtx) return;
+    try {
+      iosKeepaliveCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = iosKeepaliveCtx.createOscillator();
+      const gain = iosKeepaliveCtx.createGain();
+      gain.gain.value = 0; // completely silent
+      osc.connect(gain);
+      gain.connect(iosKeepaliveCtx.destination);
+      osc.start();
+    } catch (e) { iosKeepaliveCtx = null; }
+  }
+
+  function stopIOSKeepalive() {
+    if (iosKeepaliveCtx) {
+      try { iosKeepaliveCtx.close(); } catch (e) { /* ignore */ }
+      iosKeepaliveCtx = null;
+    }
+  }
+
   // ── State ──────────────────────────────────────────────
   let mediaRecorder = null;
   let audioStream = null;
@@ -282,8 +308,8 @@
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: true,
-          sampleRate: 48000
+          autoGainControl: true
+          // sampleRate omitted: let the browser pick its native rate (required on iOS)
         }
       });
     } catch (e) {
@@ -361,6 +387,7 @@
       clearInterval(chunkInterval);
       stopLevelMeter();
       releaseWakeLock();
+      stopIOSKeepalive();
       audioStream.getTracks().forEach(t => t.stop());
 
       // Show result
@@ -401,8 +428,9 @@
     // Level meter
     startLevelMeter(audioStream);
 
-    // Wake lock
+    // Wake lock (not supported on iOS — use silent audio keepalive instead)
     await requestWakeLock();
+    if (isIOS && !wakeLock) startIOSKeepalive();
 
     // Check storage periodically
     chunkInterval = setInterval(checkStorage, 60000);
@@ -453,6 +481,7 @@
     btnPause.textContent = '⏸ Pause';
     document.querySelector('.red-dot').style.animationPlayState = 'running';
     if (stealthMode) disableStealthMode();
+    stopIOSKeepalive();
   }
 
   // Record button handler
@@ -558,6 +587,10 @@
   // ── Transcription ─────────────────────────────────────
   $('btn-transcribe').addEventListener('click', () => transcribe(currentRecording));
 
+  // CHUNK_SECS: 2-minute segments at 16kHz mono 16-bit = 3.84MB each — safely under Netlify's 6MB limit.
+  // Whisper large-v3 is trained on 16kHz mono, so this is the optimal input format.
+  const CHUNK_SECS = 120;
+
   async function transcribe(rec) {
     if (!rec || !rec.blob) return;
 
@@ -565,40 +598,77 @@
     const progressFill = $('progress-fill');
     const progressText = $('progress-text');
     progressContainer.classList.remove('hidden');
-    progressFill.style.width = '10%';
-    progressText.textContent = 'Uploading audio...';
+    progressFill.style.width = '5%';
+    progressText.textContent = 'Preparing audio...';
 
     try {
-      // Convert blob to base64
-      const base64 = await blobToBase64(rec.blob);
-      progressFill.style.width = '30%';
-      progressText.textContent = 'Starting transcription...';
+      // Step 1: Decode original audio and resample to 16kHz mono
+      // OfflineAudioContext resamples without needing any library
+      progressText.textContent = 'Processing audio (may take a moment for long recordings)...';
+      const arrayBuffer = await rec.blob.arrayBuffer();
+      const decodeCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const decoded = await decodeCtx.decodeAudioData(arrayBuffer);
+      decodeCtx.close();
 
-      // Send to Netlify function
-      const resp = await fetch('/.netlify/functions/transcribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audio: base64,
-          mimeType: rec.mimeType
-        })
-      });
+      const targetRate = 16000;
+      const totalSamples = Math.ceil(decoded.duration * targetRate);
+      const offlineCtx = new OfflineAudioContext(1, totalSamples, targetRate);
+      const src = offlineCtx.createBufferSource();
+      src.buffer = decoded;
+      src.connect(offlineCtx.destination);
+      src.start(0);
+      const resampled = await offlineCtx.startRendering();
+      const pcmData = resampled.getChannelData(0); // Float32Array at 16kHz mono
 
-      if (!resp.ok) {
-        const err = await resp.text();
-        throw new Error(err || 'Upload failed');
+      // Step 2: Split into CHUNK_SECS-long WAV blobs
+      const chunkSize = CHUNK_SECS * targetRate;
+      const wavChunks = [];
+      for (let start = 0; start < pcmData.length; start += chunkSize) {
+        const slice = pcmData.subarray(start, Math.min(start + chunkSize, pcmData.length));
+        wavChunks.push(float32ToWav(slice, targetRate));
       }
 
-      const { predictionId } = await resp.json();
-      progressFill.style.width = '40%';
-      progressText.textContent = 'Transcribing (this may take a few minutes)...';
+      progressFill.style.width = '15%';
+      const n = wavChunks.length;
+      progressText.textContent = `Uploading ${n} segment${n > 1 ? 's' : ''}...`;
 
-      // Poll for completion
-      const result = await pollTranscription(predictionId, progressFill, progressText);
+      // Step 3: Start all Replicate predictions in parallel (one per chunk)
+      const predictionIds = await Promise.all(wavChunks.map(async (wavBlob, i) => {
+        const resp = await fetch('/.netlify/functions/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'audio/wav' },
+          body: wavBlob
+        });
+        if (!resp.ok) {
+          const errText = await resp.text();
+          throw new Error(`Segment ${i + 1} upload failed: ${errText}`);
+        }
+        const { predictionId } = await resp.json();
+        return predictionId;
+      }));
 
-      // Save transcript
-      rec.transcript = result.text || result.transcription || '';
-      rec.segments = result.segments || [];
+      progressFill.style.width = '30%';
+      progressText.textContent = `Transcribing ${n} segment${n > 1 ? 's' : ''} in parallel...`;
+
+      // Step 4: Poll all predictions simultaneously, update progress as they complete
+      const results = await pollAllPredictions(predictionIds, progressFill, progressText);
+
+      // Step 5: Stitch segments together with corrected timestamps
+      let fullText = '';
+      const allSegments = [];
+      let timeOffset = 0;
+      for (let i = 0; i < results.length; i++) {
+        const out = results[i];
+        const segText = (out.text || out.transcription || '').trim();
+        if (segText) fullText += (fullText ? ' ' : '') + segText;
+        (out.segments || []).forEach(s => {
+          allSegments.push({ ...s, start: s.start + timeOffset, end: s.end + timeOffset });
+        });
+        timeOffset += CHUNK_SECS;
+      }
+
+      rec.transcript = fullText;
+      rec.segments = allSegments;
       rec.status = 'transcribed';
       await dbPut(STORE_RECORDINGS, rec);
       currentRecording = rec;
@@ -614,37 +684,79 @@
     }
   }
 
-  async function pollTranscription(predictionId, fillEl, textEl) {
-    const maxAttempts = 180; // 15 minutes at 5s intervals
-    for (let i = 0; i < maxAttempts; i++) {
+  // Poll all prediction IDs in parallel; resolve when all complete
+  async function pollAllPredictions(ids, fillEl, textEl) {
+    const maxAttempts = 180; // 15 min max
+    const results = new Array(ids.length).fill(null);
+    const failed = new Array(ids.length).fill(false);
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       await sleep(5000);
-      const pct = 40 + Math.min(55, (i / maxAttempts) * 55);
+
+      await Promise.all(ids.map(async (id, i) => {
+        if (results[i] !== null || failed[i]) return;
+        try {
+          const resp = await fetch(`/.netlify/functions/transcribe?id=${id}`);
+          if (!resp.ok) return;
+          const data = await resp.json();
+          if (data.status === 'succeeded') {
+            results[i] = data.output;
+          } else if (data.status === 'failed' || data.status === 'canceled') {
+            failed[i] = true;
+          }
+        } catch (e) { /* transient network error, retry next round */ }
+      }));
+
+      const done = results.filter(r => r !== null).length;
+      const pct = 30 + (done / ids.length) * 65;
       fillEl.style.width = pct + '%';
+      textEl.textContent = `Transcribed ${done} of ${ids.length} segment${ids.length > 1 ? 's' : ''}...`;
 
-      const resp = await fetch(`/.netlify/functions/transcribe?id=${predictionId}`);
-      if (!resp.ok) {
-        textEl.textContent = 'Checking status...';
-        continue;
-      }
-      const data = await resp.json();
+      if (results.every(r => r !== null)) break;
 
-      if (data.status === 'succeeded') {
-        return data.output;
-      } else if (data.status === 'failed' || data.status === 'canceled') {
-        throw new Error('Transcription ' + data.status + ': ' + (data.error || ''));
-      }
-      textEl.textContent = `Transcribing... (${Math.round(pct)}%)`;
+      const failedCount = failed.filter(Boolean).length;
+      if (failedCount > 0) throw new Error(`${failedCount} segment(s) failed to transcribe`);
     }
-    throw new Error('Transcription timed out');
+
+    if (results.some(r => r === null)) throw new Error('Transcription timed out after 15 minutes');
+    return results;
   }
 
-  function blobToBase64(blob) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
+  // Encode a Float32Array of mono PCM samples to a WAV Blob
+  function float32ToWav(samples, sampleRate) {
+    const numSamples = samples.length;
+    const dataSize = numSamples * 2; // 16-bit PCM
+    const buf = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buf);
+
+    // RIFF header
+    writeWavStr(view, 0,  'RIFF');
+    view.setUint32(4,  36 + dataSize, true);
+    writeWavStr(view, 8,  'WAVE');
+    writeWavStr(view, 12, 'fmt ');
+    view.setUint32(16, 16, true);           // PCM chunk size
+    view.setUint16(20, 1,  true);           // PCM format
+    view.setUint16(22, 1,  true);           // mono
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true); // byte rate
+    view.setUint16(32, 2,  true);           // block align
+    view.setUint16(34, 16, true);           // bits per sample
+    writeWavStr(view, 36, 'data');
+    view.setUint32(40, dataSize, true);
+
+    // Convert float32 → int16
+    let offset = 44;
+    for (let i = 0; i < numSamples; i++) {
+      const s = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      offset += 2;
+    }
+
+    return new Blob([buf], { type: 'audio/wav' });
+  }
+
+  function writeWavStr(view, offset, str) {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
   }
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
