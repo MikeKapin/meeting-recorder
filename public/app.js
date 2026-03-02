@@ -648,14 +648,22 @@
 
       progressFill.style.width = '15%';
       const n = wavChunks.length;
+      progressText.textContent = `v7: ${n} segment${n > 1 ? 's' : ''}, ${(pcmData.length / targetRate).toFixed(1)}s audio decoded`;
+      await sleep(1500); // pause so user can read the diagnostic
 
-      // Step 3: Upload segments sequentially to avoid memory pressure from
-      // multiple large base64 bodies in flight at once on mobile.
+      // Step 3: Upload segments sequentially
       const predictionIds = [];
       for (let i = 0; i < wavChunks.length; i++) {
-        progressText.textContent = `Step 3/4: Uploading segment ${i + 1} of ${n}...`;
+        const wavBlob = wavChunks[i];
+        const sizeMB = (wavBlob.size / 1048576).toFixed(2);
+        progressText.textContent = `Step 3/4: Uploading segment ${i + 1}/${n} (${sizeMB} MB)...`;
         progressFill.style.width = (15 + (i / n) * 15) + '%';
-        const base64 = await blobToBase64(wavChunks[i]);
+
+        if (wavBlob.size < 100) {
+          throw new Error(`Segment ${i + 1} WAV is only ${wavBlob.size} bytes — audio encoding failed`);
+        }
+
+        const base64 = await blobToBase64(wavBlob);
         const resp = await fetch('/.netlify/functions/transcribe', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
