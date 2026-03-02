@@ -591,6 +591,9 @@
   // Whisper large-v3 is trained on 16kHz mono, so this is the optimal input format.
   const CHUNK_SECS = 120;
 
+  // Max blob size to send in one shot (base64 overhead ~1.37x, 6MB Netlify limit → ~4MB safe)
+  const DIRECT_MAX_BYTES = 4 * 1024 * 1024;
+
   async function transcribe(rec) {
     if (!rec || !rec.blob) return;
 
@@ -599,102 +602,101 @@
     const progressText = $('progress-text');
     progressContainer.classList.remove('hidden');
     progressFill.style.width = '5%';
-    progressText.textContent = 'v7: Preparing audio...';
+    progressText.textContent = 'Preparing audio...';
 
     try {
-      // Step 1: Decode original audio and resample to 16kHz mono
-      progressText.textContent = 'Step 1/4: Decoding audio...';
-      let arrayBuffer;
-      try {
-        arrayBuffer = await rec.blob.arrayBuffer();
-      } catch (e) {
-        throw new Error('Step 1 failed (read audio): ' + e.message);
-      }
+      let predictionIds;
+      let chunkCount = 1;
+      let timeOffsets = [0];
 
-      let decoded;
-      try {
-        const decodeCtx = new (window.AudioContext || window.webkitAudioContext)();
-        decoded = await decodeCtx.decodeAudioData(arrayBuffer);
-        decodeCtx.close();
-      } catch (e) {
-        throw new Error('Step 1 failed (decode audio): ' + e.message);
-      }
+      if (rec.blob.size <= DIRECT_MAX_BYTES) {
+        // ── Direct path: small recording — send original audio, no conversion ──
+        const sizeMB = (rec.blob.size / 1048576).toFixed(2);
+        progressText.textContent = `Uploading audio (${sizeMB} MB)...`;
+        progressFill.style.width = '25%';
 
-      progressText.textContent = 'Step 2/4: Resampling to 16kHz...';
-      const targetRate = 16000;
-      let pcmData;
-      try {
-        const totalSamples = Math.ceil(decoded.duration * targetRate);
-        const offlineCtx = new OfflineAudioContext(1, totalSamples, targetRate);
-        const src = offlineCtx.createBufferSource();
-        src.buffer = decoded;
-        src.connect(offlineCtx.destination);
-        src.start(0);
-        const resampled = await offlineCtx.startRendering();
-        pcmData = resampled.getChannelData(0);
-      } catch (e) {
-        throw new Error('Step 2 failed (resample): ' + e.message);
-      }
-
-      // Step 2: Split into CHUNK_SECS-long WAV blobs
-      const chunkSize = CHUNK_SECS * targetRate;
-      const wavChunks = [];
-      for (let start = 0; start < pcmData.length; start += chunkSize) {
-        const slice = pcmData.subarray(start, Math.min(start + chunkSize, pcmData.length));
-        if (slice.length >= targetRate) { // skip fragments < 1s — Replicate rejects them
-          wavChunks.push(float32ToWav(slice, targetRate));
-        }
-      }
-
-      progressFill.style.width = '15%';
-      const n = wavChunks.length;
-      progressText.textContent = `v7: ${n} segment${n > 1 ? 's' : ''}, ${(pcmData.length / targetRate).toFixed(1)}s audio decoded`;
-      await sleep(1500); // pause so user can read the diagnostic
-
-      // Step 3: Upload segments sequentially
-      const predictionIds = [];
-      for (let i = 0; i < wavChunks.length; i++) {
-        const wavBlob = wavChunks[i];
-        const sizeMB = (wavBlob.size / 1048576).toFixed(2);
-        progressText.textContent = `Step 3/4: Uploading segment ${i + 1}/${n} (${sizeMB} MB)...`;
-        progressFill.style.width = (15 + (i / n) * 15) + '%';
-
-        if (wavBlob.size < 100) {
-          throw new Error(`Segment ${i + 1} WAV is only ${wavBlob.size} bytes — audio encoding failed`);
-        }
-
-        const base64 = await blobToBase64(wavBlob);
+        const base64 = await blobToBase64(rec.blob);
         const resp = await fetch('/.netlify/functions/transcribe', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ audio: base64, mimeType: 'audio/wav' })
+          body: JSON.stringify({ audio: base64, mimeType: rec.mimeType })
         });
         if (!resp.ok) {
           const errText = await resp.text();
-          throw new Error(`Step 3 failed — segment ${i + 1} (HTTP ${resp.status}): ${errText}`);
+          throw new Error(`Upload failed (HTTP ${resp.status}): ${errText}`);
         }
-        const { predictionId } = await resp.json();
-        predictionIds.push(predictionId);
+        predictionIds = [(await resp.json()).predictionId];
+
+      } else {
+        // ── Chunked path: large recording — resample to 16kHz WAV chunks ──
+        progressText.textContent = 'Decoding audio...';
+        const targetRate = 16000;
+        let pcmData;
+        try {
+          const arrayBuffer = await rec.blob.arrayBuffer();
+          const decodeCtx = new (window.AudioContext || window.webkitAudioContext)();
+          const decoded = await decodeCtx.decodeAudioData(arrayBuffer);
+          decodeCtx.close();
+          const totalSamples = Math.ceil(decoded.duration * targetRate);
+          const offlineCtx = new OfflineAudioContext(1, totalSamples, targetRate);
+          const src = offlineCtx.createBufferSource();
+          src.buffer = decoded;
+          src.connect(offlineCtx.destination);
+          src.start(0);
+          const resampled = await offlineCtx.startRendering();
+          pcmData = resampled.getChannelData(0);
+        } catch (e) {
+          throw new Error('Audio decode failed: ' + e.message);
+        }
+
+        const chunkSize = CHUNK_SECS * targetRate;
+        const wavChunks = [];
+        timeOffsets = [];
+        for (let start = 0; start < pcmData.length; start += chunkSize) {
+          const slice = pcmData.subarray(start, Math.min(start + chunkSize, pcmData.length));
+          if (slice.length >= targetRate) {
+            wavChunks.push(float32ToWav(slice, targetRate));
+            timeOffsets.push(start / targetRate);
+          }
+        }
+        chunkCount = wavChunks.length;
+
+        predictionIds = [];
+        for (let i = 0; i < wavChunks.length; i++) {
+          progressText.textContent = `Uploading segment ${i + 1} of ${chunkCount}...`;
+          progressFill.style.width = (15 + (i / chunkCount) * 15) + '%';
+          const base64 = await blobToBase64(wavChunks[i]);
+          const resp = await fetch('/.netlify/functions/transcribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ audio: base64, mimeType: 'audio/wav' })
+          });
+          if (!resp.ok) {
+            const errText = await resp.text();
+            throw new Error(`Segment ${i + 1} upload failed (HTTP ${resp.status}): ${errText}`);
+          }
+          predictionIds.push((await resp.json()).predictionId);
+        }
       }
 
-      progressFill.style.width = '30%';
-      progressText.textContent = `Step 4/4: Transcribing ${n} segment${n > 1 ? 's' : ''} in parallel...`;
+      progressFill.style.width = '40%';
+      progressText.textContent = chunkCount > 1
+        ? `Transcribing ${chunkCount} segments in parallel...`
+        : 'Transcribing...';
 
-      // Step 4: Poll all predictions simultaneously, update progress as they complete
       const results = await pollAllPredictions(predictionIds, progressFill, progressText);
 
-      // Step 5: Stitch segments together with corrected timestamps
+      // Stitch segments with corrected timestamps
       let fullText = '';
       const allSegments = [];
-      let timeOffset = 0;
       for (let i = 0; i < results.length; i++) {
         const out = results[i];
         const segText = (out.text || out.transcription || '').trim();
         if (segText) fullText += (fullText ? ' ' : '') + segText;
+        const offset = timeOffsets[i] || 0;
         (out.segments || []).forEach(s => {
-          allSegments.push({ ...s, start: s.start + timeOffset, end: s.end + timeOffset });
+          allSegments.push({ ...s, start: s.start + offset, end: s.end + offset });
         });
-        timeOffset += CHUNK_SECS;
       }
 
       rec.transcript = fullText;

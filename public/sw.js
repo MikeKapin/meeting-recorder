@@ -1,9 +1,9 @@
-const CACHE_NAME = 'meeting-recorder-v8';
+const CACHE_NAME = 'meeting-recorder-v9';
 const ASSETS = [
   '/',
   '/index.html',
   '/style.css',
-  '/app.js?v=8',
+  '/app.js?v=9',
   '/manifest.json',
   '/icons/icon-192.png',
   '/icons/icon-512.png'
