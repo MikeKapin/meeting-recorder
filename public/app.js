@@ -599,7 +599,7 @@
     const progressText = $('progress-text');
     progressContainer.classList.remove('hidden');
     progressFill.style.width = '5%';
-    progressText.textContent = 'Preparing audio...';
+    progressText.textContent = 'v7: Preparing audio...';
 
     try {
       // Step 1: Decode original audio and resample to 16kHz mono
@@ -648,12 +648,14 @@
 
       progressFill.style.width = '15%';
       const n = wavChunks.length;
-      progressText.textContent = `Step 3/4: Uploading ${n} segment${n > 1 ? 's' : ''}...`;
 
-      // Step 3: Start all Replicate predictions in parallel (one per chunk)
-      // Base64 JSON is universally handled by Netlify/Lambda; each chunk is ~4.88 MB.
-      const predictionIds = await Promise.all(wavChunks.map(async (wavBlob, i) => {
-        const base64 = await blobToBase64(wavBlob);
+      // Step 3: Upload segments sequentially to avoid memory pressure from
+      // multiple large base64 bodies in flight at once on mobile.
+      const predictionIds = [];
+      for (let i = 0; i < wavChunks.length; i++) {
+        progressText.textContent = `Step 3/4: Uploading segment ${i + 1} of ${n}...`;
+        progressFill.style.width = (15 + (i / n) * 15) + '%';
+        const base64 = await blobToBase64(wavChunks[i]);
         const resp = await fetch('/.netlify/functions/transcribe', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -664,8 +666,8 @@
           throw new Error(`Step 3 failed — segment ${i + 1} (HTTP ${resp.status}): ${errText}`);
         }
         const { predictionId } = await resp.json();
-        return predictionId;
-      }));
+        predictionIds.push(predictionId);
+      }
 
       progressFill.style.width = '30%';
       progressText.textContent = `Step 4/4: Transcribing ${n} segment${n > 1 ? 's' : ''} in parallel...`;
