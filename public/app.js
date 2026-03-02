@@ -603,25 +603,41 @@
 
     try {
       // Step 1: Decode original audio and resample to 16kHz mono
-      // OfflineAudioContext resamples without needing any library
-      progressText.textContent = 'Processing audio (may take a moment for long recordings)...';
-      const arrayBuffer = await rec.blob.arrayBuffer();
-      const decodeCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const decoded = await decodeCtx.decodeAudioData(arrayBuffer);
-      decodeCtx.close();
+      progressText.textContent = 'Step 1/4: Decoding audio...';
+      let arrayBuffer;
+      try {
+        arrayBuffer = await rec.blob.arrayBuffer();
+      } catch (e) {
+        throw new Error('Step 1 failed (read audio): ' + e.message);
+      }
 
-      const targetRate = 16000;
-      const totalSamples = Math.ceil(decoded.duration * targetRate);
-      const offlineCtx = new OfflineAudioContext(1, totalSamples, targetRate);
-      const src = offlineCtx.createBufferSource();
-      src.buffer = decoded;
-      src.connect(offlineCtx.destination);
-      src.start(0);
-      const resampled = await offlineCtx.startRendering();
-      const pcmData = resampled.getChannelData(0); // Float32Array at 16kHz mono
+      let decoded;
+      try {
+        const decodeCtx = new (window.AudioContext || window.webkitAudioContext)();
+        decoded = await decodeCtx.decodeAudioData(arrayBuffer);
+        decodeCtx.close();
+      } catch (e) {
+        throw new Error('Step 1 failed (decode audio): ' + e.message);
+      }
+
+      progressText.textContent = 'Step 2/4: Resampling to 16kHz...';
+      let pcmData;
+      try {
+        const targetRate = 16000;
+        const totalSamples = Math.ceil(decoded.duration * targetRate);
+        const offlineCtx = new OfflineAudioContext(1, totalSamples, targetRate);
+        const src = offlineCtx.createBufferSource();
+        src.buffer = decoded;
+        src.connect(offlineCtx.destination);
+        src.start(0);
+        const resampled = await offlineCtx.startRendering();
+        pcmData = resampled.getChannelData(0);
+      } catch (e) {
+        throw new Error('Step 2 failed (resample): ' + e.message);
+      }
 
       // Step 2: Split into CHUNK_SECS-long WAV blobs
-      const chunkSize = CHUNK_SECS * targetRate;
+      const chunkSize = CHUNK_SECS * 16000;
       const wavChunks = [];
       for (let start = 0; start < pcmData.length; start += chunkSize) {
         const slice = pcmData.subarray(start, Math.min(start + chunkSize, pcmData.length));
@@ -630,12 +646,10 @@
 
       progressFill.style.width = '15%';
       const n = wavChunks.length;
-      progressText.textContent = `Uploading ${n} segment${n > 1 ? 's' : ''}...`;
+      progressText.textContent = `Step 3/4: Uploading ${n} segment${n > 1 ? 's' : ''}...`;
 
       // Step 3: Start all Replicate predictions in parallel (one per chunk)
-      // We send base64 JSON (not raw binary) because Netlify/Lambda only reliably
-      // handles binary bodies for content types it explicitly recognises. JSON is
-      // universally supported. Each chunk encodes to ~4.88 MB — under the 6 MB limit.
+      // Base64 JSON is universally handled by Netlify/Lambda; each chunk is ~4.88 MB.
       const predictionIds = await Promise.all(wavChunks.map(async (wavBlob, i) => {
         const base64 = await blobToBase64(wavBlob);
         const resp = await fetch('/.netlify/functions/transcribe', {
@@ -645,14 +659,14 @@
         });
         if (!resp.ok) {
           const errText = await resp.text();
-          throw new Error(`Segment ${i + 1} upload failed: ${errText}`);
+          throw new Error(`Step 3 failed — segment ${i + 1} (HTTP ${resp.status}): ${errText}`);
         }
         const { predictionId } = await resp.json();
         return predictionId;
       }));
 
       progressFill.style.width = '30%';
-      progressText.textContent = `Transcribing ${n} segment${n > 1 ? 's' : ''} in parallel...`;
+      progressText.textContent = `Step 4/4: Transcribing ${n} segment${n > 1 ? 's' : ''} in parallel...`;
 
       // Step 4: Poll all predictions simultaneously, update progress as they complete
       const results = await pollAllPredictions(predictionIds, progressFill, progressText);
