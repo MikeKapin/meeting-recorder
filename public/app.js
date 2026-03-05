@@ -337,7 +337,7 @@
       blob: null
     });
 
-    mediaRecorder = new MediaRecorder(audioStream, { mimeType });
+    mediaRecorder = new MediaRecorder(audioStream, { mimeType, audioBitsPerSecond: 32000 });
     const allChunks = [];
 
     mediaRecorder.ondataavailable = async (e) => {
@@ -602,7 +602,7 @@
     const progressText = $('progress-text');
     progressContainer.classList.remove('hidden');
     progressFill.style.width = '5%';
-    progressText.textContent = 'Preparing audio (v13)...';
+    progressText.textContent = 'Preparing audio (v14)...';
 
     try {
       let results;
